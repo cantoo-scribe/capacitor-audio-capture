@@ -87,16 +87,15 @@ listener: (_seq, chunk) => {
 **Buffer for a client-side WAV**:
 
 ```ts
-const parts: Float32Array[] = [];
 await AudioCapture.startCapture({
   chunkDurationMs: 250,
   targetSampleRate: 16000,
   silenceThreshold: 0,
-  listener: (_seq, chunk) => parts.push(chunk),
+  accumulate: true,
 });
 // ... user stops ...
-await AudioCapture.stopCapture();
-// concat `parts` into a single Float32Array, convert to Int16,
+const { audio } = await AudioCapture.stopCapture();
+// `audio` is a Float32Array of the full session — convert to Int16,
 // prepend a 44-byte WAV header, and you have a playable file.
 ```
 
@@ -110,6 +109,7 @@ await AudioCapture.stopCapture();
 | `targetSampleRate` | `number`                                              | `16000` | Target sample rate. Audio is resampled to this value.        |
 | `silenceThreshold` | `number` (RMS 0..1)                                   | `0`     | Chunks with RMS below this value are dropped (`0` disables). |
 | `listener`         | `(sequence: number, chunk: Float32Array) => void`     | —       | Stream consumer. Without it, capture runs but emits nothing. |
+| `accumulate`       | `boolean`                                             | `false` | Buffer every emitted chunk and return the concatenated PCM from `stopCapture`. Silent chunks are skipped. |
 
 `sequence` is monotonically increasing per session and resets on every
 `startCapture`. It is incremented even for chunks dropped by silence
@@ -117,7 +117,10 @@ detection, so consumers can detect temporal gaps.
 
 ### `stopCapture()`
 
-Stops capture and releases the active capture session.
+Stops capture and releases the active capture session. Returns
+`{ audio: Float32Array }`. When the session was started with `accumulate: true`,
+`audio` is the concatenated PCM (mono Float32 at `targetSampleRate`); otherwise
+it is an empty `Float32Array`.
 
 ### `release()`
 

@@ -48,6 +48,18 @@ export interface StartCaptureOptions {
   silenceThreshold: number;
   /** Stream consumer. Without it, capture runs but emits nothing to user code. */
   listener?: AudioChunkListener;
+  /**
+   * When `true`, the wrapper accumulates every emitted chunk and returns the
+   * concatenated buffer from `stopCapture`. Silent chunks dropped by
+   * `silenceThreshold` are not included. Keep in mind long sessions hold the
+   * full PCM in memory (~3.8 MB/min at 16 kHz / Float32).
+   */
+  accumulate?: boolean;
+}
+
+/** Result of `stopCapture`. `audio` is empty when `accumulate` was not enabled. */
+export interface StopCaptureResult {
+  audio: Float32Array;
 }
 
 /**
@@ -80,8 +92,13 @@ export interface AudioCapturePlugin {
    */
   startCapture(options?: StartCaptureOptions): Promise<void>;
 
-  /** Stop the current capture session and clear capture state. */
-  stopCapture(): Promise<void>;
+  /**
+   * Stop the current capture session and clear capture state. When the
+   * session was started with `accumulate: true`, `audio` contains the
+   * concatenated PCM (mono Float32 at `targetSampleRate`); otherwise it is
+   * an empty `Float32Array`.
+   */
+  stopCapture(): Promise<StopCaptureResult>;
 
   /** Release native resources and remove all listeners. */
   release(): Promise<void>;
