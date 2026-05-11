@@ -1,3 +1,4 @@
+import AVFoundation
 import Capacitor
 import Foundation
 
@@ -33,7 +34,8 @@ public class AudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
                 }
                 call.resolve()
             } catch {
-                call.reject(error.localizedDescription)
+                let (message, code) = AudioCapturePlugin.mapErrorCode(error)
+                call.reject(message, code)
             }
         }
 
@@ -44,10 +46,24 @@ public class AudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
                 if granted {
                     proceed()
                 } else {
-                    call.reject("Microphone permission denied.")
+                    call.reject("Microphone permission denied.", "PERMISSION_DENIED")
                 }
             }
         }
+    }
+
+    private static func mapErrorCode(_ error: Error) -> (String, String) {
+        if case AudioCaptureNativeError.alreadyCapturing = error {
+            return ("Capture already in progress.", "ALREADY_CAPTURING")
+        }
+        if error is AVError {
+            return ("Microphone unavailable.", "MICROPHONE_UNAVAILABLE")
+        }
+        let nsError = error as NSError
+        if nsError.domain == NSOSStatusErrorDomain || nsError.domain.contains("AVFoundation") {
+            return ("Microphone unavailable.", "MICROPHONE_UNAVAILABLE")
+        }
+        return (error.localizedDescription, "INTERNAL_ERROR")
     }
 
     @objc func stopCapture(_ call: CAPPluginCall) {

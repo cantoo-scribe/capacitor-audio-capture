@@ -1,6 +1,10 @@
 import AVFoundation
 import Foundation
 
+enum AudioCaptureNativeError: Error {
+    case alreadyCapturing
+}
+
 final class AudioCapture {
     typealias ChunkEmitter = (_ sequence: Int, _ base64Data: String) -> Void
 
@@ -44,8 +48,7 @@ final class AudioCapture {
                targetSampleRate: Double,
                silenceThreshold: Float,
                emitter: @escaping ChunkEmitter) throws {
-        if isRunning { throw NSError(domain: "AudioCapture", code: 1,
-                                     userInfo: [NSLocalizedDescriptionKey: "Capture already in progress."]) }
+        if isRunning { throw AudioCaptureNativeError.alreadyCapturing }
 
         self.chunkDurationMs = chunkDurationMs
         self.targetSampleRate = targetSampleRate

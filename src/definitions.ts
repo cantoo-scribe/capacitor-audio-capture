@@ -1,6 +1,35 @@
 import type { PluginListenerHandle } from '@capacitor/core';
 
 /**
+ * Closed set of error codes used by every platform implementation. Consumers
+ * should branch on `.code` rather than parsing messages, since the messages
+ * are kept short and stable but are not part of the contract.
+ *
+ * - `PERMISSION_DENIED` — user denied (or never granted) microphone access.
+ * - `MICROPHONE_UNAVAILABLE` — microphone missing, not initializable, or
+ *   otherwise unusable at the hardware/OS layer.
+ * - `ALREADY_CAPTURING` — `startCapture` was called while a session is active.
+ * - `UNAVAILABLE` — the platform lacks a required capability (web only:
+ *   `getUserMedia` or `AudioWorklet`).
+ * - `INTERNAL_ERROR` — fallback for anything that does not map cleanly to
+ *   the categories above.
+ */
+export type AudioCaptureErrorCode =
+  | 'PERMISSION_DENIED'
+  | 'MICROPHONE_UNAVAILABLE'
+  | 'ALREADY_CAPTURING'
+  | 'UNAVAILABLE'
+  | 'INTERNAL_ERROR';
+
+/**
+ * Shape of every error rejected by the plugin. The `.code` is guaranteed to
+ * be one of the values in `AudioCaptureErrorCode`.
+ */
+export interface AudioCaptureError extends Error {
+  code: AudioCaptureErrorCode;
+}
+
+/**
  * A captured PCM chunk: mono Float32 samples at the negotiated
  * `targetSampleRate`. The wrapper decodes from the bridge's base64
  * representation; the consumer receives `Float32Array` directly.

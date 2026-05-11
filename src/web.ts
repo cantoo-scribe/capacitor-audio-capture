@@ -1,6 +1,11 @@
 import { WebPlugin } from '@capacitor/core';
 
-import type { NativeAudioCapturePlugin, NativeStartCaptureOptions } from './definitions';
+import type {
+  AudioCaptureError,
+  AudioCaptureErrorCode,
+  NativeAudioCapturePlugin,
+  NativeStartCaptureOptions,
+} from './definitions';
 
 const DEFAULT_CHUNK_MS = 1000;
 const DEFAULT_TARGET_SR = 16000;
@@ -14,6 +19,12 @@ type WorkletMessage = { type: 'chunk'; sequence: number; buffer: ArrayBuffer; si
 
 const FLUSH_TIMEOUT_MS = 250;
 
+function captureError(message: string, code: AudioCaptureErrorCode): AudioCaptureError {
+  const err = new Error(message) as AudioCaptureError;
+  err.code = code;
+  return err;
+}
+
 export class AudioCaptureWeb extends WebPlugin implements NativeAudioCapturePlugin {
   private mediaStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
@@ -23,10 +34,10 @@ export class AudioCaptureWeb extends WebPlugin implements NativeAudioCapturePlug
 
   async startCapture(options?: NativeStartCaptureOptions): Promise<void> {
     if (this.workletNode) {
-      throw new Error('Capture already in progress.');
+      throw captureError('Capture already in progress.', 'ALREADY_CAPTURING');
     }
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      throw this.unavailable('getUserMedia is not available in this environment.');
+      throw captureError('getUserMedia is not available in this environment.', 'UNAVAILABLE');
     }
 
     const chunkDurationMs = options?.chunkDurationMs ?? DEFAULT_CHUNK_MS;
@@ -34,35 +45,59 @@ export class AudioCaptureWeb extends WebPlugin implements NativeAudioCapturePlug
     const silenceThreshold = options?.silenceThreshold ?? DEFAULT_SILENCE;
     const chunkSamples = Math.max(1, Math.round((chunkDurationMs / 1000) * targetSampleRate));
 
-    this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const Ctx =
-      window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    this.audioContext = new Ctx();
-
-    if (!this.audioContext.audioWorklet) {
+    try {
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
       await this.cleanupNodes();
-      throw this.unavailable('AudioWorklet is not available in this environment.');
+      const name = (e as DOMException)?.name;
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        throw captureError('Microphone permission denied.', 'PERMISSION_DENIED');
+      }
+      if (
+        name === 'NotFoundError' ||
+        name === 'OverconstrainedError' ||
+        name === 'NotReadableError' ||
+        name === 'AbortError'
+      ) {
+        throw captureError('Microphone unavailable.', 'MICROPHONE_UNAVAILABLE');
+      }
+      throw captureError((e as Error)?.message ?? 'Unknown getUserMedia failure', 'INTERNAL_ERROR');
     }
 
-    this.workletUrl = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }));
-    await this.audioContext.audioWorklet.addModule(this.workletUrl);
+    try {
+      const Ctx =
+        window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      this.audioContext = new Ctx();
 
-    this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
-    this.workletNode = new AudioWorkletNode(this.audioContext, PROCESSOR_NAME, {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      outputChannelCount: [1],
-      processorOptions: {
-        targetSampleRate,
-        chunkSamples,
-        silenceThreshold,
-      },
-    });
+      if (!this.audioContext.audioWorklet) {
+        await this.cleanupNodes();
+        throw captureError('AudioWorklet is not available in this environment.', 'UNAVAILABLE');
+      }
 
-    this.workletNode.port.onmessage = this.onWorkletMessage;
+      this.workletUrl = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }));
+      await this.audioContext.audioWorklet.addModule(this.workletUrl);
 
-    this.sourceNode.connect(this.workletNode);
-    this.workletNode.connect(this.audioContext.destination);
+      this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
+      this.workletNode = new AudioWorkletNode(this.audioContext, PROCESSOR_NAME, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        processorOptions: {
+          targetSampleRate,
+          chunkSamples,
+          silenceThreshold,
+        },
+      });
+
+      this.workletNode.port.onmessage = this.onWorkletMessage;
+
+      this.sourceNode.connect(this.workletNode);
+      this.workletNode.connect(this.audioContext.destination);
+    } catch (e) {
+      await this.cleanupNodes();
+      if ((e as AudioCaptureError)?.code) throw e;
+      throw captureError((e as Error)?.message ?? 'Unknown error', 'INTERNAL_ERROR');
+    }
   }
 
   async stopCapture(): Promise<void> {

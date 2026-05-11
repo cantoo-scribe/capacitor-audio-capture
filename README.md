@@ -129,8 +129,42 @@ Stops capture, removes listeners, and frees every open resource.
 import type {
   AudioCapturePlugin,
   AudioChunkListener,  // (sequence, chunk: Float32Array) => void
+  AudioCaptureError,
+  AudioCaptureErrorCode,
   StartCaptureOptions,
 } from '@cantoo/capacitor-audio-capture';
+```
+
+## Error handling
+
+Every rejected Promise from the plugin carries a `.code` from a closed set,
+identical across iOS, Android, and Web. Branch on `.code` rather than parsing
+messages — the messages are short and stable, but only the code is part of the
+public contract.
+
+| Code                     | When it's raised                                                                              |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| `PERMISSION_DENIED`      | User denied microphone access (or never granted it).                                          |
+| `MICROPHONE_UNAVAILABLE` | Microphone missing, busy, or fails to initialize (no input device, hardware/OS-level issue). |
+| `ALREADY_CAPTURING`      | `startCapture` was called while a session is already running.                                 |
+| `UNAVAILABLE`            | Web only: `getUserMedia` or `AudioWorklet` is missing in this environment.                    |
+| `INTERNAL_ERROR`         | Fallback for anything not matching the categories above.                                      |
+
+```ts
+import { AudioCapture, type AudioCaptureError } from '@cantoo/capacitor-audio-capture';
+
+try {
+  await AudioCapture.startCapture({ /* ... */ });
+} catch (e) {
+  const code = (e as AudioCaptureError).code;
+  if (code === 'PERMISSION_DENIED') {
+    // prompt user to enable mic access in OS settings
+  } else if (code === 'MICROPHONE_UNAVAILABLE') {
+    // surface a "no microphone" state in UI
+  } else if (code === 'ALREADY_CAPTURING') {
+    // ignore or call stopCapture() first
+  }
+}
 ```
 
 ## Why base64 on the wire, `Float32Array` in the API?

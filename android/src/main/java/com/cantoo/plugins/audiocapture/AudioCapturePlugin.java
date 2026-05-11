@@ -47,14 +47,14 @@ public class AudioCapturePlugin extends Plugin {
     @PermissionCallback
     private void microphonePermissionCallback(PluginCall call) {
         if (getPermissionState("microphone") != PermissionState.GRANTED) {
-            call.reject("Microphone permission denied.");
+            call.reject("Microphone permission denied.", "PERMISSION_DENIED");
             pendingArgs = null;
             return;
         }
         PendingArgs args = pendingArgs;
         pendingArgs = null;
         if (args == null) {
-            call.reject("Internal state error.");
+            call.reject("Internal state error.", "INTERNAL_ERROR");
             return;
         }
         doStart(call, args.chunkDurationMs, args.targetSampleRate, args.silenceThreshold);
@@ -70,7 +70,7 @@ public class AudioCapturePlugin extends Plugin {
             });
             call.resolve();
         } catch (Exception e) {
-            call.reject(e.getMessage(), e);
+            rejectMapped(call, e);
         }
     }
 
@@ -80,7 +80,7 @@ public class AudioCapturePlugin extends Plugin {
             capture.stop();
             call.resolve();
         } catch (Exception e) {
-            call.reject(e.getMessage(), e);
+            rejectMapped(call, e);
         }
     }
 
@@ -90,7 +90,37 @@ public class AudioCapturePlugin extends Plugin {
             capture.release();
             call.resolve();
         } catch (Exception e) {
-            call.reject(e.getMessage(), e);
+            rejectMapped(call, e);
+        }
+    }
+
+    private static void rejectMapped(PluginCall call, Throwable t) {
+        String code = mapErrorCode(t);
+        String message = t.getMessage();
+        if (message == null) message = defaultMessage(code);
+        call.reject(message, code, t instanceof Exception ? (Exception) t : new Exception(t));
+    }
+
+    private static String mapErrorCode(Throwable t) {
+        if (t instanceof SecurityException) return "PERMISSION_DENIED";
+        if (t instanceof IllegalStateException) {
+            String msg = t.getMessage();
+            if (msg != null) {
+                if (msg.contains("Capture already in progress")) return "ALREADY_CAPTURING";
+                if (msg.contains("buffer size") || msg.contains("AudioRecord failed to initialize")) {
+                    return "MICROPHONE_UNAVAILABLE";
+                }
+            }
+        }
+        return "INTERNAL_ERROR";
+    }
+
+    private static String defaultMessage(String code) {
+        switch (code) {
+            case "PERMISSION_DENIED": return "Microphone permission denied.";
+            case "MICROPHONE_UNAVAILABLE": return "Microphone unavailable.";
+            case "ALREADY_CAPTURING": return "Capture already in progress.";
+            default: return "Unknown error.";
         }
     }
 

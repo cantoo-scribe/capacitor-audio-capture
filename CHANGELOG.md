@@ -6,6 +6,24 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Normalized error codes across web, Android, and iOS. Every rejected
+  Promise from the plugin now carries `.code` from a closed set:
+  `PERMISSION_DENIED`, `MICROPHONE_UNAVAILABLE`, `ALREADY_CAPTURING`,
+  `UNAVAILABLE` (web only), or `INTERNAL_ERROR`. Exported as
+  `AudioCaptureErrorCode` / `AudioCaptureError` from the package root.
+  Consumers should branch on `.code` rather than match messages.
+  - iOS: typed `AudioCaptureNativeError` for in-progress detection;
+    AVFoundation / OSStatus errors map to `MICROPHONE_UNAVAILABLE`.
+  - Android: `mapErrorCode(Throwable)` maps `SecurityException` and
+    `IllegalStateException` variants; rejects use the `(message, code,
+    throwable)` form.
+  - Web: `getUserMedia` `DOMException` names map to `PERMISSION_DENIED`
+    (`NotAllowedError` / `SecurityError`) or `MICROPHONE_UNAVAILABLE`
+    (`NotFoundError` / `OverconstrainedError` / `NotReadableError` /
+    `AbortError`). `getUserMedia` / `AudioWorklet` capability misses use
+    `UNAVAILABLE`.
+
 ### Fixed
 - `stopCapture()` now flushes the residual chunk on all platforms. Previously
   any audio buffered after the last full chunk emission (up to
