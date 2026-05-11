@@ -6,6 +6,22 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `stopCapture()` now flushes the residual chunk on all platforms. Previously
+  any audio buffered after the last full chunk emission (up to
+  `chunkDurationMs - 1 sample` of audio, ~1 s with the default) was silently
+  discarded. The flush respects `silenceThreshold` and keeps `sequence`
+  monotonic. `release()` inherits the flush by calling `stopCapture` first.
+  - iOS: drains the capture queue, then emits the tail via `notifyListeners`
+    before tearing down the engine.
+  - Android: the capture thread emits any residual `chunkBuffer` after the
+    loop exits; `stop()` still `join`s the thread, so the event is fired
+    before the call resolves.
+  - Web: new `flush` / `flushed` handshake between `web.ts` and the
+    AudioWorklet. Worklet messages now carry an explicit `{ type: 'chunk' | 'flushed' }`
+    discriminator. There is a 250 ms safety timeout so a stuck worklet won't
+    block `stopCapture`.
+
 ## [0.1.2] — 2026-05-11
 
 ### Changed

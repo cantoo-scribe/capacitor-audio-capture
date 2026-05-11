@@ -80,10 +80,29 @@ final class AudioCapture {
         isRunning = false
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        // Drain any in-flight buffer processing before flushing the tail.
+        workQueue.sync { }
+        flushTail()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         emitter = nil
         chunkBuffer = []
         resampleCarry = []
+    }
+
+    private func flushTail() {
+        guard !chunkBuffer.isEmpty, let emit = emitter else { return }
+        let seq = sequence
+        sequence += 1
+        if silenceThreshold > 0 {
+            var sumSq: Float = 0
+            for v in chunkBuffer { sumSq += v * v }
+            let rms = sqrt(sumSq / Float(chunkBuffer.count))
+            if rms < silenceThreshold { return }
+        }
+        let data = chunkBuffer.withUnsafeBufferPointer { ptr -> Data in
+            Data(buffer: ptr)
+        }
+        emit(seq, data.base64EncodedString())
     }
 
     func release() {

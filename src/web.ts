@@ -10,11 +10,9 @@ const PROCESSOR_NAME = 'cantoo-audio-capture-processor';
 // Replaced at build time with the bundled audio worklet source (IIFE).
 const WORKLET_SOURCE = '__AUDIO_WORKLET_SOURCE_PLACEHOLDER__';
 
-interface WorkletMessage {
-  sequence: number;
-  buffer: ArrayBuffer;
-  silent: boolean;
-}
+type WorkletMessage = { type: 'chunk'; sequence: number; buffer: ArrayBuffer; silent: boolean } | { type: 'flushed' };
+
+const FLUSH_TIMEOUT_MS = 250;
 
 export class AudioCaptureWeb extends WebPlugin implements NativeAudioCapturePlugin {
   private mediaStream: MediaStream | null = null;
@@ -68,6 +66,7 @@ export class AudioCaptureWeb extends WebPlugin implements NativeAudioCapturePlug
   }
 
   async stopCapture(): Promise<void> {
+    await this.flushWorklet();
     await this.cleanupNodes();
   }
 
@@ -77,13 +76,37 @@ export class AudioCaptureWeb extends WebPlugin implements NativeAudioCapturePlug
   }
 
   private onWorkletMessage = (event: MessageEvent<WorkletMessage>): void => {
-    const { sequence, buffer, silent } = event.data;
-    if (silent) return;
+    const msg = event.data;
+    if (msg.type !== 'chunk' || msg.silent) return;
     // Web has no bridge serialization, so we emit the Float32Array directly —
     // the wrapper in index.ts handles both this and the base64 path used by
     // the native platforms.
-    this.notifyListeners('audioChunk', { sequence, data: new Float32Array(buffer) });
+    this.notifyListeners('audioChunk', { sequence: msg.sequence, data: new Float32Array(msg.buffer) });
   };
+
+  private flushWorklet(): Promise<void> {
+    return new Promise(resolve => {
+      const node = this.workletNode;
+      if (!node) {
+        resolve();
+        return;
+      }
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        node.port.removeEventListener('message', onMessage);
+        clearTimeout(timer);
+        resolve();
+      };
+      const onMessage = (event: MessageEvent<WorkletMessage>): void => {
+        if (event.data?.type === 'flushed') finish();
+      };
+      node.port.addEventListener('message', onMessage);
+      const timer = setTimeout(finish, FLUSH_TIMEOUT_MS);
+      node.port.postMessage({ type: 'flush' });
+    });
+  }
 
   private async cleanupNodes(): Promise<void> {
     if (this.workletNode) {

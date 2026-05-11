@@ -31,6 +31,10 @@ class CantooAudioCaptureProcessor extends AudioWorkletProcessor {
     this.chunkSamples = opts.chunkSamples;
     this.silenceThreshold = opts.silenceThreshold;
     this.resampleRatio = sampleRate / this.targetSampleRate;
+
+    this.port.onmessage = event => {
+      if (event.data?.type === 'flush') this.flush();
+    };
   }
 
   private resample(samples: Float32Array): Float32Array {
@@ -55,6 +59,28 @@ class CantooAudioCaptureProcessor extends AudioWorkletProcessor {
     return out;
   }
 
+  private emitChunk(chunk: Float32Array): void {
+    let silent = false;
+    if (this.silenceThreshold > 0) {
+      let sumSq = 0;
+      for (const v of chunk) sumSq += v * v;
+      const rms = Math.sqrt(sumSq / chunk.length);
+      silent = rms < this.silenceThreshold;
+    }
+    const seq = this.sequence++;
+    const buffer = chunk.buffer;
+    this.port.postMessage({ type: 'chunk', sequence: seq, buffer, silent }, [buffer]);
+  }
+
+  private flush(): void {
+    if (this.chunkBuffer.length > 0) {
+      const tail = this.chunkBuffer;
+      this.chunkBuffer = new Float32Array(0);
+      this.emitChunk(tail);
+    }
+    this.port.postMessage({ type: 'flushed' });
+  }
+
   process(inputs: Float32Array[][]): boolean {
     const input = inputs[0];
     if (!input || input.length === 0) return true;
@@ -72,18 +98,7 @@ class CantooAudioCaptureProcessor extends AudioWorkletProcessor {
     while (this.chunkBuffer.length >= this.chunkSamples) {
       const chunk = this.chunkBuffer.slice(0, this.chunkSamples);
       this.chunkBuffer = this.chunkBuffer.slice(this.chunkSamples);
-
-      let silent = false;
-      if (this.silenceThreshold > 0) {
-        let sumSq = 0;
-        for (const v of chunk) sumSq += v * v;
-        const rms = Math.sqrt(sumSq / chunk.length);
-        silent = rms < this.silenceThreshold;
-      }
-
-      const seq = this.sequence++;
-      const buffer = chunk.buffer;
-      this.port.postMessage({ sequence: seq, buffer, silent }, [buffer]);
+      this.emitChunk(chunk);
     }
 
     return true;

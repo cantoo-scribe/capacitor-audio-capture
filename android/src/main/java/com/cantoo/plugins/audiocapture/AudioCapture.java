@@ -164,6 +164,16 @@ class AudioCapture {
                 if (e != null) e.onChunk(seq, encodeBase64(chunk));
             }
         }
+
+        // Flush any residual buffered samples shorter than a full chunk.
+        if (chunkBuffer.length > 0) {
+            int seq = sequence++;
+            boolean drop = silenceThreshold > 0 && rms(chunkBuffer) < silenceThreshold;
+            if (!drop) {
+                ChunkEmitter e = this.emitter;
+                if (e != null) e.onChunk(seq, encodeBase64(chunkBuffer));
+            }
+        }
     }
 
     private static float[] concat(float[] a, float[] b) {
