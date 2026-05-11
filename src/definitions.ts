@@ -21,11 +21,22 @@ export interface StartCaptureOptions {
   listener?: AudioChunkListener;
 }
 
-/** Payload delivered by the bridge for every emitted chunk. */
+/**
+ * Payload delivered by the platform for every emitted chunk.
+ *
+ * - Native (iOS/Android) ships `data` as base64-encoded little-endian
+ *   Float32 PCM mono (the Capacitor bridge only carries JSON-serializable
+ *   values).
+ * - Web ships `data` as the `Float32Array` directly — there is no bridge
+ *   serialization, so base64 would just be a pointless round-trip.
+ *
+ * The JS wrapper normalizes both into a `Float32Array` before invoking the
+ * user's `listener`. Consumers using `addListener('audioChunk', ...)`
+ * directly must handle both shapes.
+ */
 export interface AudioChunkEvent {
   sequence: number;
-  /** Base64-encoded little-endian Float32 PCM mono samples. */
-  data: string;
+  data: string | Float32Array;
 }
 
 /**

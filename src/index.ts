@@ -37,7 +37,8 @@ async function attachListener(listener: AudioChunkListener): Promise<void> {
   await detachListener();
   activeListener = listener;
   chunkSubscription = await NativeAudioCapture.addListener('audioChunk', (event: AudioChunkEvent) => {
-    activeListener?.(event.sequence, decodeBase64ToFloat32(event.data));
+    const samples = typeof event.data === 'string' ? decodeBase64ToFloat32(event.data) : event.data;
+    activeListener?.(event.sequence, samples);
   });
 }
 

@@ -1,17 +1,21 @@
 # Architectural decisions
 
-## 1. Bridge transport in base64, listener receives `Float32Array`
-Capacitor doesn't carry `Float32Array` natively between native and JS. The
-viable bridge encodings were (a) a JSON number array, (b) base64. Base64
-is ~33% smaller and dramatically faster to serialize/deserialize than JSON
-arrays holding thousands of numbers, so native emits base64.
+## 1. Bridge transport (native): base64. Web: `Float32Array` direct.
+Capacitor's native↔JS bridge only carries JSON-serializable values, so on
+iOS/Android the chunk is shipped as base64-encoded little-endian Float32
+PCM. Base64 is ~33% smaller and dramatically faster to
+serialize/deserialize than a JSON number array of thousands of numbers.
 
-That said, base64 is a transport detail — the public API is an audio API.
-The wrapper decodes the base64 exactly once and hands the consumer a
-`Float32Array` of mono samples in `[-1, 1]`. This matches the natural
-representation for audio work (Web Audio, DSP, visualizers, WAV building)
-and shifts the trivial decode cost from every consumer to a single
-centralized place.
+On web there is no bridge serialization — `notifyListeners` dispatches an
+event in-process. Forcing a `Float32Array → base64 → Float32Array`
+round-trip there would be pure waste, so the web implementation passes the
+`Float32Array` straight through.
+
+The wrapper normalizes both shapes: if `event.data` is a string it decodes
+base64 once; if it's a typed array it uses it as-is. Either way, the
+consumer's `listener` receives a `Float32Array` of mono samples in
+`[-1, 1]` — the natural representation for audio work (Web Audio, DSP,
+visualizers, WAV building).
 
 ## 2. No format conversion / compression inside the plugin
 The plugin captures audio, resamples it to `targetSampleRate`, optionally

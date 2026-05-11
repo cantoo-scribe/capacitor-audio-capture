@@ -79,8 +79,10 @@ export class AudioCaptureWeb extends WebPlugin implements NativeAudioCapturePlug
   private onWorkletMessage = (event: MessageEvent<WorkletMessage>): void => {
     const { sequence, buffer, silent } = event.data;
     if (silent) return;
-    const samples = new Float32Array(buffer);
-    this.notifyListeners('audioChunk', { sequence, data: float32ToBase64(samples) });
+    // Web has no bridge serialization, so we emit the Float32Array directly —
+    // the wrapper in index.ts handles both this and the base64 path used by
+    // the native platforms.
+    this.notifyListeners('audioChunk', { sequence, data: new Float32Array(buffer) });
   };
 
   private async cleanupNodes(): Promise<void> {
@@ -108,15 +110,4 @@ export class AudioCaptureWeb extends WebPlugin implements NativeAudioCapturePlug
       this.workletUrl = null;
     }
   }
-}
-
-function float32ToBase64(samples: Float32Array): string {
-  const bytes = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength);
-  let binary = '';
-  const blockSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += blockSize) {
-    const slice = bytes.subarray(i, Math.min(i + blockSize, bytes.length));
-    binary += String.fromCharCode.apply(null, Array.from(slice));
-  }
-  return btoa(binary);
 }

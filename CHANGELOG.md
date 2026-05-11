@@ -6,6 +6,24 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-05-11
+
+### Changed
+- Web no longer round-trips chunks through base64. The `AudioWorklet`
+  emits a `Float32Array` straight into `notifyListeners`, and the JS
+  wrapper passes it through without decoding. Native (iOS/Android) keeps
+  shipping base64 over the Capacitor bridge — there the encoding is still
+  the cheapest JSON-serializable representation. The consumer-facing
+  `listener` signature is unchanged (`(sequence, chunk: Float32Array)`).
+- `AudioChunkEvent.data` widened to `string | Float32Array` to reflect the
+  asymmetric protocol. Consumers using the low-level
+  `addListener('audioChunk', ...)` escape hatch must handle both shapes;
+  the high-level `startCapture({ listener })` path normalizes for you.
+
+### Removed
+- Internal `float32ToBase64` helper in `src/web.ts` — dead code after the
+  change above.
+
 ## [0.1.0] — 2026-05-07
 
 ### Added
