@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.DS_Store
+build/
+*.iml
+.gradle/
+local.properties
+.idea/
+.vscode/
+xcuserdata/
+Pods/
+Package.resolved
+*.xcworkspace/
+DerivedData/
+.build
