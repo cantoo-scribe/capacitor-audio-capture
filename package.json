@@ -1,6 +1,6 @@
 {
   "name": "@cantoo/capacitor-audio-capture",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Capacitor v7 plugin that captures microphone audio and streams raw PCM (base64 Float32) chunks to the consumer (web/Android/iOS).",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
