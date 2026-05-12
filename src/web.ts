@@ -67,7 +67,15 @@ export class AudioCaptureWeb extends WebPlugin implements NativeAudioCapturePlug
     try {
       const Ctx =
         window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.audioContext = new Ctx();
+      // Prefer asking the browser to deliver audio already at targetSampleRate
+      // (uses the engine's built-in resampler with proper anti-aliasing). If
+      // the implementation rejects the requested rate, fall back to the default
+      // context — the worklet still does linear resampling as a safety net.
+      try {
+        this.audioContext = new Ctx({ sampleRate: targetSampleRate });
+      } catch {
+        this.audioContext = new Ctx();
+      }
 
       if (!this.audioContext.audioWorklet) {
         await this.cleanupNodes();

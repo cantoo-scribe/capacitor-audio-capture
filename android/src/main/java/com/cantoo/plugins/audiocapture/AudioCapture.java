@@ -20,7 +20,7 @@ class AudioCapture {
         void onChunk(int sequence, String base64Data);
     }
 
-    private static final int NATIVE_SAMPLE_RATE = 44100;
+    private static final int FALLBACK_SAMPLE_RATE = 44100;
     private static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
     private static final int AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT;
 
@@ -31,6 +31,7 @@ class AudioCapture {
 
     private int chunkDurationMs;
     private int targetSampleRate;
+    private int nativeSampleRate;
     private double silenceThreshold;
     private ChunkEmitter emitter;
 
@@ -53,29 +54,48 @@ class AudioCapture {
         this.silenceThreshold = silenceThreshold;
         this.emitter = emitter;
 
-        int minBuffer = AudioRecord.getMinBufferSize(NATIVE_SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT);
-        if (minBuffer <= 0) throw new IllegalStateException("Unable to determine AudioRecord buffer size.");
-        int bufferSize = Math.max(minBuffer * 2, NATIVE_SAMPLE_RATE * 2 / 10);
+        // Try opening AudioRecord directly at the requested rate so the platform
+        // does the resample with proper anti-aliasing. Fall back to 44.1 kHz
+        // (the guaranteed-supported rate on Android) with the manual linear
+        // resampler if the device rejects the requested rate.
+        int[] candidates = (targetSampleRate != FALLBACK_SAMPLE_RATE)
+                ? new int[] { targetSampleRate, FALLBACK_SAMPLE_RATE }
+                : new int[] { FALLBACK_SAMPLE_RATE };
 
-        audioRecord = createAudioRecord(bufferSize);
-        if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
-            audioRecord.release();
-            audioRecord = null;
-            throw new IllegalStateException("AudioRecord failed to initialize.");
+        AudioRecord record = null;
+        int chosenRate = 0;
+        int chosenBuffer = 0;
+        for (int rate : candidates) {
+            int minBuffer = AudioRecord.getMinBufferSize(rate, CHANNEL_CONFIG, AUDIO_FORMAT);
+            if (minBuffer <= 0) continue;
+            int bs = Math.max(minBuffer * 2, rate * 2 / 10);
+            AudioRecord candidate = createAudioRecord(rate, bs);
+            if (candidate.getState() == AudioRecord.STATE_INITIALIZED) {
+                record = candidate;
+                chosenRate = rate;
+                chosenBuffer = bs;
+                break;
+            }
+            candidate.release();
         }
+        if (record == null) throw new IllegalStateException("AudioRecord failed to initialize.");
+
+        audioRecord = record;
+        nativeSampleRate = chosenRate;
 
         running = true;
         audioRecord.startRecording();
 
-        captureThread = new Thread(() -> captureLoop(bufferSize), "AudioCapture-Reader");
+        final int loopBufferSize = chosenBuffer;
+        captureThread = new Thread(() -> captureLoop(loopBufferSize), "AudioCapture-Reader");
         captureThread.start();
     }
 
     @SuppressLint("MissingPermission")
-    private AudioRecord createAudioRecord(int bufferSize) {
+    private AudioRecord createAudioRecord(int sampleRate, int bufferSize) {
         return new AudioRecord(
                 MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                NATIVE_SAMPLE_RATE,
+                sampleRate,
                 CHANNEL_CONFIG,
                 AUDIO_FORMAT,
                 bufferSize
@@ -117,7 +137,7 @@ class AudioCapture {
         final int targetChunkSamples = Math.max(1, (int) Math.round(((double) chunkDurationMs / 1000.0) * targetSampleRate));
         float[] chunkBuffer = new float[0];
         float[] resampleCarry = new float[0];
-        final double resampleRatio = (double) NATIVE_SAMPLE_RATE / (double) targetSampleRate;
+        final double resampleRatio = (double) nativeSampleRate / (double) targetSampleRate;
         int sequence = 0;
 
         while (running) {

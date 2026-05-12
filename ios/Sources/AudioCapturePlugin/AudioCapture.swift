@@ -18,9 +18,10 @@ final class AudioCapture {
 
     private var sequence: Int = 0
     private var chunkBuffer: [Float] = []
-    private var resampleCarry: [Float] = []
     private var chunkTargetSamples: Int = 0
     private var nativeSampleRate: Double = 0
+    private var converter: AVAudioConverter?
+    private var targetFormat: AVAudioFormat?
 
     private let workQueue = DispatchQueue(label: "com.cantoo.audiocapture.work")
 
@@ -56,7 +57,6 @@ final class AudioCapture {
         self.emitter = emitter
         self.sequence = 0
         self.chunkBuffer = []
-        self.resampleCarry = []
         self.chunkTargetSamples = max(1, Int((Double(chunkDurationMs) / 1000.0) * targetSampleRate))
 
         let session = AVAudioSession.sharedInstance()
@@ -64,10 +64,20 @@ final class AudioCapture {
         try session.setActive(true, options: .notifyOthersOnDeactivation)
 
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        nativeSampleRate = format.sampleRate
+        let inputFormat = input.outputFormat(forBus: 0)
+        nativeSampleRate = inputFormat.sampleRate
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+        // Set up an AVAudioConverter to handle both sample-rate conversion
+        // (with proper anti-aliasing) and channel downmix to mono in one step.
+        self.targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                         sampleRate: targetSampleRate,
+                                         channels: 1,
+                                         interleaved: false)
+        if let target = self.targetFormat {
+            self.converter = AVAudioConverter(from: inputFormat, to: target)
+        }
+
+        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             self?.workQueue.async {
                 self?.process(buffer: buffer)
             }
@@ -89,7 +99,8 @@ final class AudioCapture {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         emitter = nil
         chunkBuffer = []
-        resampleCarry = []
+        converter = nil
+        targetFormat = nil
     }
 
     private func flushTail() {
@@ -113,29 +124,12 @@ final class AudioCapture {
     }
 
     private func process(buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.floatChannelData else { return }
-        let frameCount = Int(buffer.frameLength)
-        if frameCount == 0 { return }
+        if buffer.frameLength == 0 { return }
 
-        var samples = [Float](repeating: 0, count: frameCount)
-        let channels = Int(buffer.format.channelCount)
-        if channels == 1 {
-            samples.withUnsafeMutableBufferPointer { ptr in
-                ptr.baseAddress!.update(from: channelData[0], count: frameCount)
-            }
-        } else {
-            // Mix down to mono (simple average across channels).
-            for i in 0..<frameCount {
-                var sum: Float = 0
-                for c in 0..<channels { sum += channelData[c][i] }
-                samples[i] = sum / Float(channels)
-            }
-        }
+        let converted = convert(buffer: buffer)
+        if converted.isEmpty { return }
 
-        let resampled = resample(samples)
-        if resampled.isEmpty { return }
-
-        chunkBuffer.append(contentsOf: resampled)
+        chunkBuffer.append(contentsOf: converted)
         while chunkBuffer.count >= chunkTargetSamples {
             let chunk = Array(chunkBuffer[0..<chunkTargetSamples])
             chunkBuffer.removeFirst(chunkTargetSamples)
@@ -143,30 +137,37 @@ final class AudioCapture {
         }
     }
 
-    private func resample(_ samples: [Float]) -> [Float] {
-        let ratio = nativeSampleRate / targetSampleRate
-        if abs(ratio - 1.0) < 1e-9 { return samples }
-
-        var combined = resampleCarry
-        combined.append(contentsOf: samples)
-
-        let outLen = Int(floor(Double(combined.count - 1) / ratio))
-        if outLen <= 0 {
-            resampleCarry = combined
+    private func convert(buffer: AVAudioPCMBuffer) -> [Float] {
+        guard let converter = converter, let targetFormat = targetFormat else {
             return []
         }
 
-        var out = [Float](repeating: 0, count: outLen)
-        for i in 0..<outLen {
-            let pos = Double(i) * ratio
-            let idx = Int(floor(pos))
-            let frac = Float(pos - Double(idx))
-            out[i] = combined[idx] * (1 - frac) + combined[idx + 1] * frac
+        // Output capacity: input frames scaled by the rate ratio, plus a margin
+        // for the converter's internal filter group delay.
+        let ratio = targetSampleRate / max(nativeSampleRate, 1)
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1024
+        guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else {
+            return []
         }
 
-        let consumed = Int(floor(Double(outLen) * ratio))
-        resampleCarry = Array(combined[consumed..<combined.count])
-        return out
+        var provided = false
+        var error: NSError?
+        let status = converter.convert(to: outBuffer, error: &error) { _, statusPtr in
+            if provided {
+                statusPtr.pointee = .noDataNow
+                return nil
+            }
+            provided = true
+            statusPtr.pointee = .haveData
+            return buffer
+        }
+
+        if status == .error || error != nil { return [] }
+
+        let frames = Int(outBuffer.frameLength)
+        if frames == 0 { return [] }
+        guard let ptr = outBuffer.floatChannelData?[0] else { return [] }
+        return Array(UnsafeBufferPointer(start: ptr, count: frames))
     }
 
     private func emit(chunk: [Float]) {
